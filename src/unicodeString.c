@@ -58,29 +58,44 @@ bool gcu_unicode_string_get_grapheme_offsets(GCU_Vector32 * grapheme_offsets, co
     return false;
   }
 
+  // The offsets are stored as uint32. A boundary past that cannot be recorded.
+  if (length > UINT32_MAX) {
+    return false;
+  }
+
   // Worst case: every byte is its own grapheme, plus the sentinel at the end.
-  if (!gcu_vector32_reserve(grapheme_offsets, length + 1)) {
+  // The vector may already hold entries, so the reserve covers those too.
+  size_t cap = 0;
+  size_t needed = 0;
+  if (!gcu_safe_add_size(length, 1, &cap)
+      || !gcu_safe_add_size(grapheme_offsets->count, cap, &needed)
+      || !gcu_vector32_reserve(grapheme_offsets, needed)) {
     return false;
   }
 
-  GUNI_BreakIter iter;
-  guni_break_iter_init(&iter, NULL, buffer, length);
-  size_t position = 0;
-  while (guni_break_iter_next(&iter, &position)) {
-    if (position > UINT32_MAX) {
-      return false;
-    }
-    if (!gcu_vector32_append(grapheme_offsets, GCU_TYPE32_UI32((uint32_t)position))) {
-      return false;
-    }
-  }
-
-  // The walk reports offset 0 and the end of the text. Without both, the
-  // length derived from this vector would not cover the buffer.
-  size_t count = gcu_vector32_count(grapheme_offsets);
-  if (count < 2 || grapheme_offsets->data[count - 1].ui32 != (uint32_t)length) {
+  // guni_break_all() writes size_t. The vector's slots are uint32, so the
+  // table is filled into a temporary buffer and then copied across.
+  size_t bytes = 0;
+  if (!gcu_safe_mul_size(cap, sizeof(size_t), &bytes)) {
     return false;
   }
+  size_t * bounds = gcu_malloc(bytes);
+  if (bounds == NULL) {
+    return false;
+  }
+  size_t count = 0;
+  GUNI_Result result = guni_break_all(NULL, buffer, length, bounds, cap, &count);
+  if (result != GUNI_OK || count < 2 || bounds[count - 1] != length) {
+    gcu_free(bounds);
+    return false;
+  }
+
+  size_t base = grapheme_offsets->count;
+  for (size_t i = 0; i < count; i++) {
+    grapheme_offsets->data[base + i] = GCU_TYPE32_UI32((uint32_t)bounds[i]);
+  }
+  grapheme_offsets->count = base + count;
+  gcu_free(bounds);
   return true;
 }
 
