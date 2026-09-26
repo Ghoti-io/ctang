@@ -6,7 +6,6 @@
 
 #include <gtest/gtest.h>
 #include <ghoti.io/cutil/memory.h>
-#include <unicode/uclean.h>
 #include <iostream>
 #include <ghoti.io/tang/unicodeString.h>
 
@@ -839,7 +838,6 @@ TEST(Render, SubstringOfConcatenated) {
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
   int result = RUN_ALL_TESTS();
-  u_cleanup();
   return result;
 }
 

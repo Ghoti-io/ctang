@@ -118,10 +118,10 @@ installs `ghoti.io-tang-dev` instead.
 
 ## Building the library
 
-[cutil](https://github.com/Ghoti-io/cutil) must already be installed where
-pkg-config can see it, and so must ICU (`icu-io`, `icu-i18n`, `icu-uc`),
-which the grapheme iterator is built on. A dependency pkg-config cannot find
-is a hard error naming the fix.
+[cutil](https://github.com/Ghoti-io/cutil) and
+[unicode](https://github.com/Ghoti-io/unicode) must already be installed where
+pkg-config can see them. Grapheme boundaries come from unicode. A dependency
+pkg-config cannot find is a hard error naming the fix.
 
 ```bash
 sudo apt install g++ make bison flex build-essential pkgconf libgtest-dev \
@@ -173,7 +173,7 @@ Found through pkg-config, and the installed `.pc` file names them, so a
 program that links `ghoti.io-tang-0` links these too.
 
 - [ghoti.io-cutil](https://github.com/Ghoti-io/cutil) — the allocator.
-- ICU (`icu-io`, `icu-i18n`, `icu-uc`) — the grapheme iterator strings are built on.
+- [ghoti.io-unicode](https://github.com/Ghoti-io/unicode) — grapheme boundaries.
 
 ## Documentation
 

@@ -29,8 +29,8 @@
  * page. Preloading this makes the refusal the only outcome, so that the
  * suite runs the failure arm for every program it compiles.
  *
- * Only PROT_EXEC mappings are refused. malloc(), the C++ runtime and ICU all
- * map memory without it and are handed the real mmap(), so the process runs
+ * Only PROT_EXEC mappings are refused. malloc() and the C++ runtime map memory
+ * without it and are handed the real mmap(), so the process runs
  * normally in every respect except that no program can be JIT compiled.
  *
  * Linux only, and a test artifact: it is never installed.

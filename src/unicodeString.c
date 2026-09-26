@@ -21,18 +21,16 @@
 
 #include <assert.h>
 #include <ctype.h>
+#include <stdint.h>
 #include <string.h>
 #include <ghoti.io/cutil/array.h>
 #include <ghoti.io/cutil/memory.h>
 #include <ghoti.io/cutil/safemath.h>
 #include <ghoti.io/tang/allocator.h>
-#include <unicode/uconfig.h>
-#include <unicode/ustring.h>
-#include <unicode/ubrk.h>
+#include <ghoti.io/unicode/break.h>
+#include <ghoti.io/unicode/utf.h>
 #include <ghoti.io/tang/macros.h>
 #include <ghoti.io/tang/unicodeString.h>
-
-#include <stdio.h>
 
 /**
  * This pair will be punted into a uint64_t, for use in the string type vector.
@@ -47,114 +45,43 @@ bool gcu_unicode_string_get_grapheme_offsets(GCU_Vector32 * grapheme_offsets, co
   assert(grapheme_offsets);
   assert(buffer);
 
-  bool success = false;
-
-  // Early exit for empty strings.
+  // An empty string is one grapheme boundary at offset 0. The break iterator
+  // reports no boundary on empty text, because there is nothing to fall between.
   if (!length) {
-    if (!gcu_vector32_append(grapheme_offsets, GCU_TYPE32_UI32(0))) {
-      goto EARLY_ERROR;
-    }
-    success = true;
-    goto EARLY_SUCCESS;
+    return gcu_vector32_append(grapheme_offsets, GCU_TYPE32_UI32(0));
   }
 
-  // Worst case: string is standard ASCII.
+  // Ill-formed UTF-8 used to fail the conversion into the break iterator's
+  // encoding, and string creation failed with it. Refuse here for the same
+  // reason: a boundary inside a bad sequence is not a grapheme.
+  if (guni_utf8_validate(buffer, length, NULL) != GUNI_OK) {
+    return false;
+  }
+
+  // Worst case: every byte is its own grapheme, plus the sentinel at the end.
   if (!gcu_vector32_reserve(grapheme_offsets, length + 1)) {
-    goto EARLY_ERROR;
+    return false;
   }
 
-  // Create an ICU Character Break Iterator to identify the graphemes.
-  UErrorCode err = U_ZERO_ERROR;
-  UBreakIterator * iter = ubrk_open(UBRK_CHARACTER, NULL, NULL, 0, &err);
-  if (!U_SUCCESS(err)) {
-    goto EARLY_ERROR;
-  }
-
-  // Add the first offset.
-  // This is always 0, even for an empty string.
-  if (!gcu_vector32_append(grapheme_offsets, GCU_TYPE32_UI32(0))) {
-    goto OFFSET_ADD_FAILED;
-  }
-
-  // Set the text to iterate through.
-  // Convert buffer (which is a char *) to a UChar * using ICU conversion
-  // functions.
-  // This is safe because the buffer is guaranteed to be UTF-8.
-  int32_t uLength = 0;
-  UChar * uBuffer = NULL;
-  // Pre-flight the conversion to determine the length of the resulting string.
-  u_strFromUTF8(NULL, 0, &uLength, buffer, length, &err);
-  if (err == U_BUFFER_OVERFLOW_ERROR) {
-    err = U_ZERO_ERROR;
-    uBuffer = gcu_malloc(sizeof(UChar) * (uLength + 1));
-    if (uBuffer == NULL) {
-      goto UBUFFER_CREATE_FAILED;
+  GUNI_BreakIter iter;
+  guni_break_iter_init(&iter, NULL, buffer, length);
+  size_t position = 0;
+  while (guni_break_iter_next(&iter, &position)) {
+    if (position > UINT32_MAX) {
+      return false;
     }
-    u_strFromUTF8(uBuffer, uLength + 1, NULL, buffer, length, &err);
-  }
-  if (!U_SUCCESS(err)) {
-    goto STRFROMUTF8_FAILED;
-  }
-
-  ubrk_setText(iter, uBuffer, uLength, &err);
-  if (!U_SUCCESS(err)) {
-    goto STRFROMUTF8_FAILED;
-  }
-
-  // Print out each uBuffer character.
-  // for (int32_t i = 0; i < uLength; ++i) {
-  //   printf("%d: %d\n", i, uBuffer[i]);
-  // }
-
-  // Find each grapheme offset one by one.  When we find the next offset, we
-  // can then determine the length of the previous grapheme in UTF-8 so that
-  // we can calculate the offset of the currently found grapheme.
-  int32_t previous_index_in_UTF16 = 0;
-  // NOTE: Workaround for a bug? in the ICU library.
-  // In the u_strToUTF8() call below, we *should* be able to leave the
-  // destination buffer as NULL and the length as 0 to pre-flight the
-  // conversion, but that causes bad results.  Instead, we will allocate a
-  // buffer and then throw it away.
-  // We know that the original string was valid UTF-8, so the maximum length
-  // required for any grapheme is the length of the original string.
-  char * dummyBuffer = gcu_malloc(length + 1);
-  if (dummyBuffer == NULL) {
-    goto DUMMY_BUFFER_CREATE_FAILED;
-  }
-  while (ubrk_next(iter) != UBRK_DONE) {
-    int32_t current_index_in_UTF16 = ubrk_current(iter);
-
-    // Find out how many bytes the grapheme is as UTF-8.
-    int32_t grapheme_length_in_UTF8;
-    u_strToUTF8(dummyBuffer, length + 1, &grapheme_length_in_UTF8, &uBuffer[previous_index_in_UTF16], current_index_in_UTF16 - previous_index_in_UTF16, &err);
-    // We do not check for an error because we already know that this is valid
-    // UTF-8, converted to UTF-16, and back to UTF-8, which is guaranteed to
-    // be valid and lossless.
-
-    // Add the offset to the vector.
-    if (!gcu_vector32_append(grapheme_offsets, GCU_TYPE32_UI32(grapheme_length_in_UTF8 + grapheme_offsets->data[grapheme_offsets->count - 1].ui32))) {
-      goto GRAPHEME_OFFSET_ADD_FAILED;
+    if (!gcu_vector32_append(grapheme_offsets, GCU_TYPE32_UI32((uint32_t)position))) {
+      return false;
     }
-    previous_index_in_UTF16 = current_index_in_UTF16;
   }
 
-  success = true;
-  // Fall-through for cleanup
-
-GRAPHEME_OFFSET_ADD_FAILED:
-  gcu_free(dummyBuffer);
-DUMMY_BUFFER_CREATE_FAILED:
-STRFROMUTF8_FAILED:
-  if (uBuffer) {
-    // Note: If the buffer was an empty string, then uBuffer will be NULL.
-    gcu_free(uBuffer);
+  // The walk reports offset 0 and the end of the text. Without both, the
+  // length derived from this vector would not cover the buffer.
+  size_t count = gcu_vector32_count(grapheme_offsets);
+  if (count < 2 || grapheme_offsets->data[count - 1].ui32 != (uint32_t)length) {
+    return false;
   }
-OFFSET_ADD_FAILED:
-UBUFFER_CREATE_FAILED:
-  ubrk_close(iter);
-EARLY_ERROR:
-EARLY_SUCCESS:
-  return success;
+  return true;
 }
 
 

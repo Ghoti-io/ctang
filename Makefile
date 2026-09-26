@@ -361,9 +361,15 @@ ifeq ($(strip $(CUTIL_CFLAGS)),)
 $(error ghoti.io-cutil was not found by pkg-config. Run ./bootstrap.sh in the parent folder to build and install the suite into a local prefix, then pass the same PREFIX here - or point PKG_CONFIG_PATH at the directory holding its .pc file. There is deliberately no sibling-checkout fallback: a second resolution path that only in-tree builds exercise is one that silently rots.)
 endif
 endif
-ICU_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --cflags icu-io icu-i18n icu-uc)
-ICU_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs icu-io icu-i18n icu-uc)
-CFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wno-error=unused-function -Wfatal-errors -std=c17 $(OPT_CFLAGS) -g $(ICU_CFLAGS) $(CUTIL_CFLAGS) $(EXTRA_CFLAGS)
+UNICODE_PC ?= ghoti.io-unicode$(BRANCH)
+UNICODE_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --cflags $(UNICODE_PC) 2>/dev/null)
+UNICODE_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs $(UNICODE_PC) 2>/dev/null)
+ifndef SKIP_DEP_CHECK
+ifeq ($(strip $(UNICODE_CFLAGS)),)
+$(error ghoti.io-unicode was not found by pkg-config. Run ./bootstrap.sh in the parent folder to build and install the suite into a local prefix, then pass the same PREFIX here - or point PKG_CONFIG_PATH at the directory holding its .pc file. There is deliberately no sibling-checkout fallback: a second resolution path that only in-tree builds exercise is one that silently rots.)
+endif
+endif
+CFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wno-error=unused-function -Wfatal-errors -std=c17 $(OPT_CFLAGS) -g $(UNICODE_CFLAGS) $(CUTIL_CFLAGS) $(EXTRA_CFLAGS)
 
 # The shipped library exports its public API and nothing else. Tests reach the
 # internals by linking the static archive, which a static link can do even for
@@ -387,7 +393,7 @@ LIB_CFLAGS := $(CFLAGS) -fvisibility=hidden -DGHOTIIO_TANG_BUILD
 GENERATED_CFLAGS := -Wno-unused-function -Wno-unused-but-set-variable \
                     -Wno-unneeded-internal-declaration
 # -DGHOTIIO_CUTIL_ENABLE_MEMORY_DEBUG
-LDFLAGS := -L /usr/lib -lstdc++ -lm $(ICU_LIBS) $(CUTIL_LIBS) $(EXTRA_LDFLAGS)
+LDFLAGS := -L /usr/lib -lstdc++ -lm $(UNICODE_LIBS) $(CUTIL_LIBS) $(EXTRA_LDFLAGS)
 ifdef PREFIX
 # So that a library, a test or an example finds its Ghoti.io dependencies in the
 # prefix at run time without LD_LIBRARY_PATH.
@@ -401,8 +407,8 @@ export PATH := $(BIN_INSTALL_PATH):$(PATH)
 endif
 endif
 
-# The C++ test translation units include cutil and ICU headers too.
-CXXFLAGS += $(ICU_CFLAGS) $(CUTIL_CFLAGS)
+# The C++ test translation units include cutil and unicode headers too.
+CXXFLAGS += $(UNICODE_CFLAGS) $(CUTIL_CFLAGS)
 BUILD_DIR := ./build/$(BUILD)
 OBJ_DIR := $(BUILD_DIR)/objects
 FLAGS_STAMP := $(OBJ_DIR)/.flags
@@ -488,9 +494,9 @@ TEST_GATES ?= check-symbols
 
 
 # The static archive, not -l: a static link resolves hidden symbols, so the
-# tests can exercise internals the shared library does not export. ICU and
+# tests can exercise internals the shared library does not export. unicode and
 # cutil follow it, because an archive carries no DT_NEEDED of its own.
-TANGLIBRARY := -Wl,--whole-archive $(APP_DIR)/$(STATIC_TARGET) -Wl,--no-whole-archive $(ICU_LIBS) $(CUTIL_LIBS)
+TANGLIBRARY := -Wl,--whole-archive $(APP_DIR)/$(STATIC_TARGET) -Wl,--no-whole-archive $(UNICODE_LIBS) $(CUTIL_LIBS)
 
 
 all: $(APP_DIR)/$(TARGET) $(APP_DIR)/$(STATIC_TARGET) $(APP_DIR)/tang$(EXE_EXTENSION) ## Build the shared and static libraries
@@ -839,7 +845,7 @@ SAN_LIB_CFLAGS := $(SAN_CFLAGS) -fvisibility=hidden -DGHOTIIO_TANG_BUILD
 
 SAN_LIBOBJECTS := $(patsubst $(OBJ_DIR)/%,$(SAN_OBJ_DIR)/%,$(LIBOBJECTS))
 SAN_STATIC_TARGET := $(SAN_APP_DIR)/$(STATIC_TARGET)
-SAN_TANGLIBRARY := -Wl,--whole-archive $(SAN_STATIC_TARGET) -Wl,--no-whole-archive $(ICU_LIBS) $(CUTIL_LIBS)
+SAN_TANGLIBRARY := -Wl,--whole-archive $(SAN_STATIC_TARGET) -Wl,--no-whole-archive $(UNICODE_LIBS) $(CUTIL_LIBS)
 
 # name|source, so one rule template covers them all.
 SAN_TEST_PAIRS := \
@@ -986,7 +992,7 @@ sanitizer-selftest: ## Prove the sanitizer flags actually catch what they claim
 FUZZ_CC ?= clang
 FUZZ_CXX ?= clang++
 FUZZ_CC_OK := $(shell which $(FUZZ_CXX) 2>/dev/null)
-# These flags instrument ctang's own objects and nothing else. cutil and ICU
+# These flags instrument ctang's own objects and nothing else. cutil and unicode
 # are linked as ordinary shared libraries, so ASan cannot see a bad access that
 # happens inside them - it only notices once the damage reaches memory ctang
 # owns, if it ever does. compress learned the same thing the same way.
@@ -1003,11 +1009,11 @@ FUZZ_LIB_FLAGS := $(FUZZ_SAN) -fsanitize=fuzzer-no-link
 FUZZ_BIN_FLAGS := $(FUZZ_SAN) -fsanitize=fuzzer
 # As with SAN_LIB_CFLAGS: everything the fuzz recipes actually pass, in one
 # variable, so that the stamp records the whole command and not a prefix of it.
-# ICU_CFLAGS and CUTIL_CFLAGS matter most here - they come from pkg-config, so
+# UNICODE_CFLAGS and CUTIL_CFLAGS matter most here - they come from pkg-config, so
 # they change when a dependency is reinstalled rather than when anyone edits
 # this file, and the fuzz tree is the one that runs longest against them.
-FUZZ_LIB_CFLAGS := $(FUZZ_LIB_FLAGS) -std=c17 -w -DGHOTIIO_TANG_BUILD $(ICU_CFLAGS) $(CUTIL_CFLAGS)
-FUZZ_BIN_CFLAGS := $(FUZZ_BIN_FLAGS) -std=c17 -w $(ICU_CFLAGS) $(CUTIL_CFLAGS)
+FUZZ_LIB_CFLAGS := $(FUZZ_LIB_FLAGS) -std=c17 -w -DGHOTIIO_TANG_BUILD $(UNICODE_CFLAGS) $(CUTIL_CFLAGS)
+FUZZ_BIN_CFLAGS := $(FUZZ_BIN_FLAGS) -std=c17 -w $(UNICODE_CFLAGS) $(CUTIL_CFLAGS)
 
 FUZZ_DIR := $(BUILD_DIR)-fuzz
 FUZZ_OBJ_DIR := $(FUZZ_DIR)/objects
@@ -1114,7 +1120,7 @@ $$(FUZZ_APP_DIR)/$1: test/fuzz/$1.c $$(FUZZ_OBJECTS)
 	@printf "\n### Building $1 ###\n"
 	$$(FUZZ_CC) $$(FUZZ_BIN_CFLAGS) $$(INCLUDE) \
 		-MMD -MP -MF $$(FUZZ_APP_DIR)/$1.d \
-		-o $$@ $$< $$(FUZZ_OBJECTS) $$(ICU_LIBS) $$(CUTIL_LIBS) -lstdc++ -lm $$(FUZZ_RPATH)
+		-o $$@ $$< $$(FUZZ_OBJECTS) $$(UNICODE_LIBS) $$(CUTIL_LIBS) -lstdc++ -lm $$(FUZZ_RPATH)
 
 # env -u LD_PRELOAD for the same reason the sanitizer target does it: desktop
 # sessions here set LD_PRELOAD for unrelated reasons and a sanitizer runtime
@@ -1413,7 +1419,7 @@ LDCONF_INSTALL_PATH ?= /etc/ld.so.conf.d
 # What goes in the .pc Requires: field. Built from the same variables the
 # compile uses, so a dependency on another branch cannot be named one way for
 # the build and another way for consumers.
-PC_REQUIRES := $(CUTIL_PC) icu-io icu-i18n icu-uc
+PC_REQUIRES := $(CUTIL_PC) $(UNICODE_PC)
 
 # Where this project's own .pc file is installed. Defaults to the directory
 # pkg-config is already being told to search, but separate from it so a
@@ -1587,7 +1593,7 @@ help: ## Display this help
 # fix: `make all CC='cc -O1'` rebuilt 0 of 62 objects and left every one of
 # them recording -O2, because $(CC) appeared in every compile recipe and in no
 # stamp. The same held for LIB_CFLAGS against CFLAGS, and for the fuzz tree's
-# ICU_CFLAGS and CUTIL_CFLAGS, which come from pkg-config and so change when a
+# UNICODE_CFLAGS and CUTIL_CFLAGS, which come from pkg-config and so change when a
 # dependency is reinstalled rather than when this file is edited.
 #
 # The check is mechanical: for each recipe a stamp guards, subtract the

@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <iostream>
 #include <string>
-#include <unicode/uclean.h>
 
 #include <ghoti.io/tang/tang.h>
 #include <ghoti.io/tang/macros.h>
@@ -4191,8 +4190,5 @@ int main(int argc, char **argv) {
   gcu_memory_reset_counts();
   gta_language_destroy(language);
   assert((alloc_count + gcu_get_alloc_count()) == (free_count + gcu_get_free_count()));
-
-  // ICU cleanup.
-  u_cleanup();
   return result;
 }

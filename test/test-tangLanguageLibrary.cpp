@@ -2,7 +2,6 @@
 #include <iostream>
 #include <random>
 #include <gtest/gtest.h>
-#include <unicode/uclean.h>
 
 #include <ghoti.io/cutil/memory.h>
 #include <ghoti.io/tang/tang.h>
@@ -201,8 +200,5 @@ int main(int argc, char **argv) {
   gcu_memory_reset_counts();
   gta_language_destroy(language);
   assert((alloc_count + gcu_get_alloc_count()) == (free_count + gcu_get_free_count()));
-
-  // ICU cleanup.
-  u_cleanup();
   return result;
 }
