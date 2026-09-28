@@ -172,7 +172,9 @@ TEST(Random, Random) {
     ASSERT_TRUE(GTA_COMPUTED_VALUE_IS_FLOAT(context->result));
     GTA_Computed_Value_Float * result = (GTA_Computed_Value_Float *)context->result;
     std::mt19937_64 mt(123);
-    ASSERT_EQ(result->value, (GTA_Float)mt() / (GTA_Float)std::mt19937_64::max());
+    uint64_t word = mt();
+    GTA_Float expected = (GTA_Float)((double)(word >> 11) * (1.0 / 9007199254740992.0));
+    ASSERT_EQ(result->value, expected);
     TEST_PROGRAM_TEARDOWN();
   }
   {

@@ -43,30 +43,56 @@
 
 #endif // _WIN32
 
-#if GTA_32_BIT
-#define RNG_STATE GCU_Random_MT32_State
-#define RNG_INIT gcu_random_mt32_init
-#define RNG_NEXT gcu_random_mt32_next
-
-#elif GTA_64_BIT
-#define RNG_STATE GCU_Random_MT64_State
-#define RNG_INIT gcu_random_mt64_init
-#define RNG_NEXT gcu_random_mt64_next
-
-#else
-#error "Unsupported architecture"
-#endif
-
 /**
  * The semaphore for the global random number generator.
+ *
+ * The handle itself is not safe to draw from on two threads. This lock is
+ * the one that makes the global generator shareable. A seeded generator is
+ * not shared, so it takes no lock.
  */
 static GCU_Semaphore global_semaphore;
 
 
 /**
- * The state for the global random number generator.
+ * The global generator lives in static storage. A handle from the heap would
+ * still be allocated when a program ends, and the tests require every heap
+ * block to be freed by then.
  */
-static RNG_STATE rng_state;
+static GCU_Random_MT64_State global_mt;
+static unsigned char global_pending[8];
+static unsigned global_pending_off;
+static unsigned global_pending_len;
+static _Alignas(void *) unsigned char global_handle_storage[64];
+static int global_ready;
+
+
+static int global_fill(void * ctx, void * out, size_t n) {
+  unsigned char * dst = out;
+  while (n != 0) {
+    size_t have;
+    size_t take;
+    if (global_pending_off == global_pending_len) {
+      uint64_t word = gcu_random_mt64_next(ctx);
+      global_pending[0] = (unsigned char)word;
+      global_pending[1] = (unsigned char)(word >> 8);
+      global_pending[2] = (unsigned char)(word >> 16);
+      global_pending[3] = (unsigned char)(word >> 24);
+      global_pending[4] = (unsigned char)(word >> 32);
+      global_pending[5] = (unsigned char)(word >> 40);
+      global_pending[6] = (unsigned char)(word >> 48);
+      global_pending[7] = (unsigned char)(word >> 56);
+      global_pending_off = 0;
+      global_pending_len = 8;
+    }
+    have = (size_t)(global_pending_len - global_pending_off);
+    take = n < have ? n : have;
+    memcpy(dst, global_pending + global_pending_off, take);
+    global_pending_off += (unsigned)take;
+    dst += take;
+    n -= take;
+  }
+  return 0;
+}
 
 
 /**
@@ -234,11 +260,11 @@ GTA_Computed_Value_RNG * GTA_CALL gta_computed_value_rng_create_seeded(GTA_UInte
 
 bool GTA_CALL gta_computed_value_rng_create_seeded_in_place(GTA_Computed_Value_RNG * self, GTA_UInteger seed, GTA_Execution_Context * context) {
   assert(self);
-  RNG_STATE * state = (RNG_STATE *)gcu_malloc(sizeof(RNG_STATE));
+  // MT19937-64 on every architecture, so a seed names one sequence.
+  GCU_Random * state = gcu_random_mt64((uint64_t)seed);
   if (!state) {
     return false;
   }
-  RNG_INIT(state, seed);
 
   *self = (GTA_Computed_Value_RNG) {
     .base = {
@@ -268,8 +294,12 @@ void GTA_CALL gta_computed_value_rng_destroy(GTA_Computed_Value * self) {
 void GTA_CALL gta_computed_value_rng_destroy_in_place(GTA_Computed_Value * self) {
   assert(self);
   GTA_Computed_Value_RNG * rng = (GTA_Computed_Value_RNG *)self;
+  if ((GTA_Computed_Value *)rng == gta_computed_value_random_global) {
+    return;
+  }
   if (rng->state) {
-    gcu_free(rng->state);
+    gcu_random_free((GCU_Random *)rng->state);
+    rng->state = NULL;
   }
 }
 
@@ -302,26 +332,47 @@ static GTA_UInteger GTA_CALL rng_get_default_seed(void) {
 }
 
 
-static GTA_UInteger GTA_CALL rng_get_next(GTA_Computed_Value_RNG * self) {
+static GCU_Random * GTA_CALL rng_engine(GTA_Computed_Value_RNG * self, bool * locked) {
   assert(self);
-  if ((GTA_Computed_Value *)self == gta_computed_value_random_global) {
-    // Acquire the global semaphore.
+  *locked = (GTA_Computed_Value *)self == gta_computed_value_random_global;
+  if (*locked) {
     gcu_semaphore_wait(&global_semaphore);
-
-    // If the global RNG has not been initialized, initialize it.
-    if (!self->state) {
-      RNG_INIT(&rng_state, self->seed);
-      self->state = &rng_state;
+    if (!global_ready) {
+      GCU_Random_Engine engine;
+      assert(sizeof global_handle_storage >= gcu_random_handle_size());
+      gcu_random_mt64_init(&global_mt, (uint64_t)self->seed);
+      global_pending_off = 0;
+      global_pending_len = 0;
+      engine.ctx = &global_mt;
+      engine.fill = global_fill;
+      engine.destroy = NULL;
+      self->state = gcu_random_place(global_handle_storage, sizeof global_handle_storage, &engine);
+      assert(self->state);
+      global_ready = 1;
     }
-
-    // Generate the next random number.
-    GTA_UInteger result = RNG_NEXT(self->state);
-
-    // Release the global semaphore.
-    gcu_semaphore_signal(&global_semaphore);
-    return result;
   }
-  return RNG_NEXT(self->state);
+  return (GCU_Random *)self->state;
+}
+
+
+static void GTA_CALL rng_unlock(bool locked) {
+  if (locked) {
+    gcu_semaphore_signal(&global_semaphore);
+  }
+}
+
+
+static uint64_t GTA_CALL rng_get_next(GTA_Computed_Value_RNG * self) {
+  bool locked = false;
+  GCU_Random * engine = rng_engine(self, &locked);
+  uint64_t result = 0;
+  int rc = gcu_random_u64(engine, &result);
+  rng_unlock(locked);
+  if (rc != 0) {
+    assert(rc == 0);
+    return 0;
+  }
+  return result;
 }
 
 
@@ -339,7 +390,7 @@ static GTA_Computed_Value * GTA_CALL rng_next_bool(GTA_Computed_Value * self, GT
 static GTA_Computed_Value * GTA_CALL rng_next_int(GTA_Computed_Value * self, GTA_Execution_Context * context) {
   assert(self);
   assert(GTA_COMPUTED_VALUE_IS_RNG(self));
-  return (GTA_Computed_Value *)gta_computed_value_integer_create(rng_get_next((GTA_Computed_Value_RNG *)self), context);
+  return (GTA_Computed_Value *)gta_computed_value_integer_create((GTA_UInteger)rng_get_next((GTA_Computed_Value_RNG *)self), context);
 }
 
 
@@ -347,7 +398,17 @@ static GTA_Computed_Value * GTA_CALL rng_next_int(GTA_Computed_Value * self, GTA
 static GTA_Computed_Value * GTA_CALL rng_next_float(GTA_Computed_Value * self, GTA_Execution_Context * context) {
   assert(self);
   assert(GTA_COMPUTED_VALUE_IS_RNG(self));
-  return (GTA_Computed_Value *)gta_computed_value_float_create((GTA_Float)rng_get_next((GTA_Computed_Value_RNG *)self) / (GTA_Float)GTA_UINTEGER_MAX, context);
+  bool locked = false;
+  GTA_Computed_Value_RNG * rng = (GTA_Computed_Value_RNG *)self;
+  GCU_Random * engine = rng_engine(rng, &locked);
+  double value = 0.0;
+  int rc = gcu_random_f64(engine, &value);
+  rng_unlock(locked);
+  if (rc != 0) {
+    assert(rc == 0);
+    return gta_computed_value_error_out_of_memory;
+  }
+  return (GTA_Computed_Value *)gta_computed_value_float_create((GTA_Float)value, context);
 }
 
 
@@ -384,9 +445,13 @@ static GTA_Computed_Value * GTA_CALL rng_set_seed_callback(GTA_Computed_Value * 
   GTA_Computed_Value_Integer * seed = (GTA_Computed_Value_Integer *)argv[0];
 
   // Set the seed.
+  GCU_Random * next = gcu_random_mt64((uint64_t)seed->value);
+  if (!next) {
+    return gta_computed_value_error_out_of_memory;
+  }
   rng->seed = seed->value;
-  assert(rng->state);
-  RNG_INIT(rng->state, rng->seed);
+  gcu_random_free((GCU_Random *)rng->state);
+  rng->state = next;
 
   return bound_object;
 }

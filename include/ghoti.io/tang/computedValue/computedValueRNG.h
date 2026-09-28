@@ -21,7 +21,9 @@
 /**
  * @file
  *
- * The various random number generators available in the Random library.
+ * Tang's random values. The generator is MT19937-64, the C++ std::mt19937_64
+ * sequence, on every architecture. The handle is CUtil's GCU_Random. The
+ * global generator is shared under Tang's own semaphore.
  */
 
 #ifndef GHOTI_IO_GTA_COMPUTEDVALUE_COMPUTEDVALUERNG_H
@@ -56,7 +58,7 @@ struct GTA_Computed_Value_RNG {
    */
   GTA_UInteger seed;
   /**
-   * The random number generator state.
+   * A GCU_Random handle, MT19937-64. NULL until the global generator is first used.
    */
   void * state;
 };

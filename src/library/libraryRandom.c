@@ -20,7 +20,6 @@
 
 
 #include <assert.h>
-#include <ghoti.io/cutil/random.h>
 #include <ghoti.io/tang/macros.h>
 #include <ghoti.io/tang/library/libraryRandom.h>
 #include <ghoti.io/tang/computedValue/computedValueError.h>
