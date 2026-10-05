@@ -54,8 +54,8 @@ GTA_API extern GTA_Computed_Value * gta_computed_value_boolean_false;
  * The GTA_Computed_Value_Boolean class.
  */
 struct GTA_Computed_Value_Boolean {
-  GTA_Computed_Value base;
-  bool value;
+  GTA_Computed_Value base; ///< The common computed-value header.
+  bool value;              ///< The boolean held.
 };
 
 /**

@@ -1014,7 +1014,7 @@ one token; that is an implementation detail and changes nothing above.
 
 ## 13. Implementation status
 
-Every open item is reproducible with `tang -s -e '<code>'`, or with the test
+Every open item is reproducible with `tang -s -e 'SOURCE'`, or with the test
 harness in `test/`. Numbers are for cross-reference from the text above, not
 priority, and they are never reused: an item that has been fixed keeps its
 number and says so, because the text above points at these by number.

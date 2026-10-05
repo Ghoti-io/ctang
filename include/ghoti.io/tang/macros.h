@@ -488,16 +488,16 @@ typedef struct GTA_Unicode_Rendered_String GTA_Unicode_Rendered_String;
  * Helper union for converting between function pointers and void pointers.
  */
 typedef union GTA_Function_Converter {
-  GTA_Computed_Value * GTA_CALL (*f)(GTA_Execution_Context *);
-  void * b;
+  GTA_Computed_Value * GTA_CALL (*f)(GTA_Execution_Context *); ///< As a function pointer.
+  void * b; ///< As a void pointer.
 } GTA_Function_Converter;
 
 /**
  * Helper union for converting between function pointers and integers.
  */
 typedef union GTA_JIT_Function_Converter {
-  void GTA_CALL (*f)(void);
-  GTA_UInteger i;
+  void GTA_CALL (*f)(void); ///< As a function pointer.
+  GTA_UInteger i; ///< As an integer.
 } GTA_JIT_Function_Converter;
 
 /**

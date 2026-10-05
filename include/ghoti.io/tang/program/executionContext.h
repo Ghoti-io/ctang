@@ -55,12 +55,6 @@ extern "C" {
 typedef GTA_Computed_Value * GTA_CALL (*GTA_Execution_Context_Global_Create) (GTA_Execution_Context * context);
 
 /**
- * The Context class.
- *
- * The Context class is used to manage the state of the execution environment
- * for a Tang program as it is being executed.
-*/
-/**
  * The call depth a new execution context allows by default.
  *
  * The x86-64 engine calls compiled functions with real `call` instructions,
@@ -73,6 +67,12 @@ typedef GTA_Computed_Value * GTA_CALL (*GTA_Execution_Context_Global_Create) (GT
  */
 #define GTA_EXECUTION_CONTEXT_DEFAULT_MAX_CALL_DEPTH 512
 
+/**
+ * The Context class.
+ *
+ * The Context class is used to manage the state of the execution environment
+ * for a Tang program as it is being executed.
+ */
 struct GTA_Execution_Context {
   /**
    * The program being executed.
